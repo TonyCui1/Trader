@@ -55,11 +55,30 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     low = stocks.pivot_table(index="date", columns="symbol", values="low").sort_index()
     adj = stocks.pivot_table(index="date", columns="symbol", values="adj_close").sort_index()
 
+    warnings: list[str] = []
     minute = store.read("minute_1030")
-    minute["date"] = pd.to_datetime(minute["date"])
-    vwap = (minute[minute["symbol"] != "SPY"]
-            .pivot_table(index="date", columns="symbol", values="vwap_1030")
-            .reindex(index=close.index, columns=close.columns))
+    if not minute.empty:
+        minute["date"] = pd.to_datetime(minute["date"])
+        vwap = (minute[minute["symbol"] != "SPY"]
+                .pivot_table(index="date", columns="symbol", values="vwap_1030")
+                .reindex(index=close.index, columns=close.columns))
+    else:
+        vwap = pd.DataFrame(np.nan, index=close.index, columns=close.columns)
+
+    # Fill-price fallback: where no real 10:30 minute bar exists (historical
+    # live-mode data — the free tier cannot backfill minute bars at scale),
+    # approximate the 10:30 price as open + 35% of the day's open->close move.
+    # Real 10:30 bars accumulate daily once paper trading starts, and the
+    # reconciliation slippage log measures how good this proxy is.
+    opens = stocks.pivot_table(index="date", columns="symbol", values="open").sort_index()
+    proxy = opens + 0.35 * (close - opens)
+    n_missing = int((vwap.isna() & close.notna()).to_numpy().sum())
+    n_total = int(close.notna().to_numpy().sum())
+    if n_missing:
+        warnings.append(
+            f"{n_missing}/{n_total} bar-days ({n_missing / max(n_total, 1):.0%}) "
+            "had no 10:30 minute bar; fills used the daily-bar proxy")
+    vwap = vwap.fillna(proxy)
 
     dollar_vol = close * stocks.pivot_table(index="date", columns="symbol",
                                             values="volume").sort_index()
@@ -83,7 +102,8 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     for _, row in earnings.iterrows():
         earnings_by_day.setdefault(row["earnings_date"].normalize(), set()).add(row["symbol"])
 
-    master = store.read("security_master")
+    from ..data.universe import latest_security_master
+    master = latest_security_master(store)
     sectors = pd.Series(dict(zip(master["symbol"], master["sector"])))
 
     # precompute PIT universe membership per month (avoids per-day DB reads)
@@ -102,7 +122,6 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     valid = (composite_panel.notna().sum(axis=1) >= MIN_NAMES_FOR_START)
     start_cfg = pd.Timestamp(str(cfg["backtest"]["start"]))
     startable = valid[valid & (valid.index >= start_cfg)]
-    warnings: list[str] = []
     if startable.empty:
         startable = valid[valid]
         warnings.append("backtest.start predates signal warmup; started at first valid day")

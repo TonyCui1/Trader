@@ -12,9 +12,19 @@ import pandas as pd
 from .store import PITStore
 
 
+def latest_security_master(store: PITStore) -> pd.DataFrame:
+    """One row per symbol, newest ingested_at wins (sector enrichment appends
+    fresh rows on top of the append-only history)."""
+    m = store.read("security_master")
+    if m.empty:
+        return m
+    return (m.sort_values("ingested_at")
+            .drop_duplicates(subset="symbol", keep="last"))
+
+
 def build_universe(store: PITStore, cfg: dict, fixture: bool = False) -> int:
     prices = store.read("prices")
-    master = store.read("security_master")
+    master = latest_security_master(store)
     if prices.empty or master.empty:
         raise RuntimeError("prices/security_master must be ingested before universe build")
 

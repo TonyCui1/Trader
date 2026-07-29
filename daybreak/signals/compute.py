@@ -32,7 +32,8 @@ def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]
     P = prices.pivot_table(index="date", columns="symbol", values="adj_close").sort_index()
     rets = P.pct_change(fill_method=None)
 
-    master = store.read("security_master")
+    from ..data.universe import latest_security_master
+    master = latest_security_master(store)
     sector_of = dict(zip(master["symbol"], master["sector"]))
     sectors = pd.Series({c: sector_of.get(c, "Unknown") for c in P.columns})
 
@@ -87,9 +88,10 @@ def _fundamental_panels(store: PITStore, cfg: dict, P: pd.DataFrame
                         ) -> dict[str, pd.DataFrame]:
     """Daily value/quality/pead panels from quarterly fundamentals via as-of
     joins on ingested_at (which embeds the 90-day fiscal lag)."""
+    from ..data.universe import latest_security_master
     s = cfg["signals"]
     f = store.read("fundamentals")
-    master = store.read("security_master")
+    master = latest_security_master(store)
     sector_of = dict(zip(master["symbol"], master["sector"]))
     dates = P.index
     nan_panel = pd.DataFrame(np.nan, index=dates, columns=P.columns)

@@ -78,7 +78,8 @@ def compute_decision(store: PITStore, cfg: dict, current_shares: dict[str, int]
             current_w.loc[s] = v / equity
             comp.loc[s] = np.nan
 
-    master = store.read("security_master")
+    from ..data.universe import latest_security_master
+    master = latest_security_master(store)
     sectors = pd.Series(dict(zip(master["symbol"], master["sector"])))
 
     target = target_portfolio(comp, vol60.loc[t_prev].reindex(comp.index),

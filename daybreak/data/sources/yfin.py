@@ -32,12 +32,18 @@ def ingest_yf_macro(store: PITStore, cfg: dict) -> None:
     print(f"[yfinance] macro: {len(df)} rows")
 
 
-def ingest_yf_fundamentals(store: PITStore, cfg: dict) -> None:
+def ingest_yf_fundamentals(store: PITStore, cfg: dict,
+                           symbols: list[str] | None = None) -> None:
     import yfinance as yf
-    master = store.read("security_master")
+    if symbols is None:
+        symbols = store.read("security_master")["symbol"].tolist()
     now = pd.Timestamp.utcnow().tz_localize(None)
+    print(f"[yfinance] crawling fundamentals for {len(symbols)} symbols "
+          "(slow — expect 1-3s each)...", flush=True)
     rows = []
-    for sym in master["symbol"].tolist():
+    for i, sym in enumerate(symbols):
+        if i and i % 50 == 0:
+            print(f"[yfinance] {i}/{len(symbols)} done", flush=True)
         try:
             t = yf.Ticker(sym)
             q = t.quarterly_income_stmt
@@ -71,3 +77,47 @@ def _get(frame: pd.DataFrame, row: str, col) -> float | None:
         return float(v) if pd.notna(v) else None
     except (KeyError, TypeError):
         return None
+
+
+def enrich_sectors(store: PITStore, cfg: dict) -> None:
+    """Fill in sector labels for security_master rows marked 'Unknown'.
+
+    Appends fresh rows (the store is append-only); consumers read the latest
+    row per symbol. Slow (~1-2s/symbol via yfinance) — run once, ideally
+    overnight, before trusting sector caps and value sector-neutralization.
+    """
+    import yfinance as yf
+    from ..universe import latest_security_master
+
+    master = latest_security_master(store)
+    todo = master[master["sector"].isin(["Unknown", "", None])]["symbol"].tolist()
+    if not todo:
+        print("[sectors] nothing to enrich")
+        return
+    print(f"[sectors] enriching {len(todo)} symbols (slow)...", flush=True)
+    rows = []
+    for i, sym in enumerate(todo):
+        if i and i % 50 == 0:
+            print(f"[sectors] {i}/{len(todo)} done", flush=True)
+        try:
+            sector = yf.Ticker(sym).info.get("sector") or "Unknown"
+        except Exception:
+            sector = "Unknown"
+        if sector != "Unknown":
+            rows.append({"symbol": sym, "sector": sector})
+    if rows:
+        df = pd.DataFrame(rows)
+        now = pd.Timestamp.utcnow().tz_localize(None)
+        df["source_ts"] = now
+        df["ingested_at"] = now
+        store.append("security_master", df)
+    print(f"[sectors] enriched {len(rows)}/{len(todo)} symbols")
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    from ...config import load_config as _load
+    _cfg = _load()
+    enrich_sectors(PITStore(_cfg["run"]["data_dir"]), _cfg)
+    _sys.exit(0)

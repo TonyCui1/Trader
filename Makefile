@@ -1,12 +1,18 @@
 PY := python3
 
-.PHONY: ingest ingest-fixture backtest validate paper-dry-run test clean
+.PHONY: ingest ingest-fast ingest-fixture sectors backtest validate paper-dry-run test clean
 
 ingest:
 	$(PY) -m daybreak.data.ingest
 
+ingest-fast:
+	$(PY) -m daybreak.data.ingest --skip-fundamentals
+
 ingest-fixture:
 	$(PY) -m daybreak.data.ingest --fixture
+
+sectors:
+	$(PY) -m daybreak.data.sources.yfin
 
 backtest:
 	$(PY) -m daybreak.backtest.run

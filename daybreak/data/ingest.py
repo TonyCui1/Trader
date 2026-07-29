@@ -75,17 +75,30 @@ def ingest_fixture(cfg: dict) -> PITStore:
     return store
 
 
-def ingest_live(cfg: dict) -> PITStore:
+def ingest_live(cfg: dict, skip_fundamentals: bool = False) -> PITStore:
     from .sources.alpaca_src import ingest_alpaca_prices
     from .sources.french import ingest_french_rf
     from .sources.yfin import ingest_yf_fundamentals, ingest_yf_macro
+    from .universe import universe_for_date
 
     store = PITStore(cfg["run"]["data_dir"])
     ingest_alpaca_prices(store, cfg)
     ingest_yf_macro(store, cfg)
-    ingest_yf_fundamentals(store, cfg)   # flagged NOT point-in-time
     ingest_french_rf(store, cfg)
     build_universe(store, cfg, fixture=False)
+
+    if skip_fundamentals:
+        print("[ingest] SKIPPED fundamentals (price-only mode: momentum/"
+              "reversal/lowvol signals active, value/quality/pead inactive). "
+              "Run `make ingest` without --skip-fundamentals when you have "
+              "an hour or two — ideally overnight.")
+    else:
+        # fundamentals only for current universe members (yfinance is slow;
+        # ~1000 symbols is already an hours-long crawl)
+        uni = universe_for_date(store, pd.Timestamp.utcnow().tz_localize(None))
+        symbols = sorted(uni["symbol"].unique()) if not uni.empty else None
+        ingest_yf_fundamentals(store, cfg, symbols=symbols)  # flagged NOT PIT
+
     print(f"[ingest] live ingest complete, config_hash={cfg['_config_hash']}")
     return store
 
@@ -94,13 +107,15 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", action="store_true",
                     help="generate the deterministic synthetic dataset")
+    ap.add_argument("--skip-fundamentals", action="store_true",
+                    help="live mode: skip the slow yfinance fundamentals crawl")
     ap.add_argument("--config", default=None)
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     if args.fixture:
         ingest_fixture(cfg)
     else:
-        ingest_live(cfg)
+        ingest_live(cfg, skip_fundamentals=args.skip_fundamentals)
     return 0
 
 

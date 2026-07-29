@@ -28,15 +28,18 @@ def _headers() -> dict:
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
 
-def fetch_daily_bars(symbols: list[str], start: str, end: str) -> pd.DataFrame:
+def fetch_daily_bars(symbols: list[str], start: str, end: str,
+                     verbose: bool = False) -> pd.DataFrame:
+    """Daily bars via the IEX feed (the free plan; SIP needs a subscription)."""
     rows = []
-    for chunk_start in range(0, len(symbols), 200):
+    n_chunks = (len(symbols) + 199) // 200
+    for ci, chunk_start in enumerate(range(0, len(symbols), 200)):
         chunk = symbols[chunk_start:chunk_start + 200]
         page_token = None
         while True:
             params = {"symbols": ",".join(chunk), "timeframe": "1Day",
                       "start": start, "end": end, "adjustment": "all",
-                      "limit": 10000}
+                      "feed": "iex", "limit": 10000}
             if page_token:
                 params["page_token"] = page_token
             r = requests.get(f"{DATA_URL}/stocks/bars", params=params,
@@ -52,7 +55,25 @@ def fetch_daily_bars(symbols: list[str], start: str, end: str) -> pd.DataFrame:
             page_token = payload.get("next_page_token")
             if not page_token:
                 break
+        if verbose:
+            print(f"[alpaca] bars chunk {ci + 1}/{n_chunks} "
+                  f"({len(rows)} rows so far)", flush=True)
     return pd.DataFrame(rows)
+
+
+def fetch_active_symbols() -> list[str]:
+    """All active, tradable US common stocks from the trading API (paper)."""
+    r = requests.get("https://paper-api.alpaca.markets/v2/assets",
+                     params={"status": "active", "asset_class": "us_equity"},
+                     headers=_headers(), timeout=120)
+    r.raise_for_status()
+    out = []
+    for a in r.json():
+        sym = a.get("symbol", "")
+        if (a.get("tradable") and a.get("exchange") in ("NYSE", "NASDAQ", "ARCA", "AMEX")
+                and sym.isalpha() and len(sym) <= 5):
+            out.append(sym)
+    return sorted(set(out))
 
 
 def fetch_1030_minute_bars(symbols: list[str], date: str) -> pd.DataFrame:
@@ -80,25 +101,39 @@ def fetch_1030_minute_bars(symbols: list[str], date: str) -> pd.DataFrame:
 
 
 def ingest_alpaca_prices(store: PITStore, cfg: dict) -> None:
-    # Bootstrap symbol list: most-active US equities via the screener, else
-    # reuse an existing security_master.
+    # Bootstrap the symbol list: pull every active US common stock, rank by
+    # recent dollar volume, and keep ~1.2x the target universe size so the
+    # monthly universe builder has headroom. (The most-actives screener caps
+    # at 100 names, so it cannot seed a Russell-1000-style universe.)
     master = store.read("security_master")
+    now = pd.Timestamp.utcnow().tz_localize(None)
     if master.empty:
-        r = requests.get(f"{DATA_URL}/../v1beta1/screener/stocks/most-actives",
-                         params={"by": "volume", "top": 1000},
-                         headers=_headers(), timeout=60)
-        r.raise_for_status()
-        symbols = [x["symbol"] for x in r.json().get("most_actives", [])]
+        all_syms = fetch_active_symbols()
+        print(f"[alpaca] {len(all_syms)} active US equities; ranking by recent "
+              "dollar volume (one-time bootstrap, a few minutes)...", flush=True)
+        recent_start = str((pd.Timestamp.utcnow() - pd.Timedelta(days=45)).date())
+        recent = fetch_daily_bars(all_syms, recent_start,
+                                  str(pd.Timestamp.utcnow().date()), verbose=True)
+        if recent.empty:
+            raise RuntimeError("bootstrap bars came back empty")
+        advd = (recent.assign(dv=recent["close"] * recent["volume"])
+                .groupby("symbol")["dv"].mean().sort_values(ascending=False))
+        keep = int(cfg["universe"]["size"] * 1.2)
+        symbols = advd.head(keep).index.tolist()
         sm = pd.DataFrame({"symbol": symbols, "sector": "Unknown"})
-        sm["source_ts"] = pd.Timestamp.utcnow().tz_localize(None)
-        sm["ingested_at"] = pd.Timestamp.utcnow().tz_localize(None)
+        sm["source_ts"] = now
+        sm["ingested_at"] = now
         store.append("security_master", sm)
+        print(f"[alpaca] kept top {len(symbols)} by dollar volume "
+              "(sectors start as 'Unknown'; run `make sectors` to enrich)")
     else:
         symbols = master["symbol"].tolist()
 
     start = str(cfg["backtest"]["start"])
     end = str(pd.Timestamp.utcnow().date())
-    bars = fetch_daily_bars(symbols + ["SPY"], start, end)
+    print(f"[alpaca] fetching daily history {start} -> {end} for "
+          f"{len(symbols)} symbols...", flush=True)
+    bars = fetch_daily_bars(symbols + ["SPY"], start, end, verbose=True)
     if bars.empty:
         raise RuntimeError("Alpaca returned no bars")
     clean, quarantined = gate_prices(bars, corp_actions=None)
