@@ -1,0 +1,11 @@
+duckdb>=0.10
+pandas>=2.0
+numpy>=1.26
+pyarrow>=15.0
+pyyaml>=6.0
+requests>=2.31
+yfinance>=0.2.40
+pandas-market-calendars>=4.3
+pytest>=8.0
+# Optional, only needed for live paper execution:
+# alpaca-py>=0.20

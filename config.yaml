@@ -1,0 +1,69 @@
+# daybreak configuration — ALL tunable thresholds live here (spec core rule 6).
+# The decision time (10:30:00 ET) is deliberately NOT here: it is hardcoded
+# (spec core rule 3) and must never be parameterized or optimized.
+
+run:
+  seed: 42
+  data_dir: ./pit_data        # DuckDB + Parquet point-in-time store location
+
+universe:
+  size: 1000                  # top-N US stocks by dollar volume (Russell 1000 proxy)
+  adv_lookback_days: 63       # trailing window for dollar-volume ranking
+  fixture_size: 100           # smaller universe used by the synthetic fixture/CI
+
+signals:
+  winsor_z: 3.0               # cross-sectional z-scores clipped at +/- this value
+  fundamental_lag_days: 90    # fundamentals usable only 90d after fiscal period end
+  momentum:
+    lookback_days: 252        # ~12 months
+    skip_days: 21             # skip most recent month (12-1 momentum)
+  reversal:
+    lookback_days: 21         # trailing 1-month return, inverted
+  lowvol:
+    lookback_days: 60         # realized vol window, inverted
+  pead:
+    decay_days: 60            # SUE signal decays linearly to 0 over this window
+    sue_lookback_quarters: 8  # trailing quarters for seasonal-random-walk SUE std
+
+regime:
+  spy_ma_days: 200            # SPY below this MA -> REDUCED
+  credit_ma_days: 100         # HYG/LQD ratio below its own MA (with SPY<MA) -> OFF
+  vix_reduced_threshold: 30.0 # VIX above this forces at least REDUCED
+
+portfolio:
+  max_positions: 20
+  top_fraction: 0.10          # candidate pool = top decile of composite
+  target_vol_annual: 0.10     # portfolio vol target
+  vol_lookback_days: 60
+  max_weight_per_name: 0.08
+  max_weight_per_sector: 0.25
+  earnings_blackout_days: 2   # no NEW position if earnings within next N trading days
+  conviction_z_min: 0.5       # trade only if composite z exceeds this ...
+  min_trade_pct: 0.01         # ... and the trade moves the position by >1% of portfolio
+  max_daily_turnover: 0.20    # turnover brake: max fraction of portfolio traded per day
+  circuit_breaker_dd: 0.12    # drawdown from high-water mark that flattens to cash
+  restart_after_halt: false   # manual flag: must be set true to resume after breaker
+
+costs:
+  slippage_k: 0.1             # slippage = k * sqrt(order_size / ADV)
+  sec_fee_per_dollar_sold: 0.0000278
+  taf_fee_per_share_sold: 0.000166
+  commission_per_trade: 0.0   # Alpaca
+  tax_rate_short_term: 0.35   # configurable short-term-gains estimate rate
+
+backtest:
+  start: "2021-01-01"
+  end: null                   # null = latest available
+  initial_equity: 100000.0
+  sharpe_warning_level: 1.5   # spec core rule 5: net Sharpe above this prints a bug banner
+
+validate:
+  lag_sharpe_drop_max: 0.30   # lag test fails (leakage) if Sharpe drops more than this
+  sensitivity_perturbation: 0.25
+  shuffle_seed: 7
+
+execute:
+  paper: true                 # v1: paper only, always
+  limit_offset_pct: 0.003     # limit = last trade +/- 0.3%
+  cancel_after_minutes: 15
+  kill_switch_file: ./KILL_SWITCH
