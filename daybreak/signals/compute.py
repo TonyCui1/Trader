@@ -105,7 +105,14 @@ def _fundamental_panels(store: PITStore, cfg: dict, P: pd.DataFrame
 
     f = f.copy()
     f["fiscal_end"] = pd.to_datetime(f["fiscal_end"])
-    f["available"] = pd.to_datetime(f["ingested_at"])
+    # Availability rule (spec Phase 2): fundamentals become usable
+    # `fundamental_lag_days` after fiscal period end. We deliberately do NOT
+    # use ingested_at here: snapshot sources (yfinance) stamp everything
+    # "seen today", which would hide all history from backtests. The
+    # restatement look-ahead risk this accepts is the flagged yfinance
+    # prototyping tradeoff; a true PIT vendor swap should switch this to
+    # max(vendor availability, fiscal_end + lag).
+    f["available"] = f["fiscal_end"] + pd.Timedelta(days=s["fundamental_lag_days"])
     f = f.sort_values(["symbol", "fiscal_end"])
 
     g = f.groupby("symbol", group_keys=False)

@@ -64,14 +64,7 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
                     "fcf": _get(cf, "Free Cash Flow", col),
                     "shares": info_shares,
                 })
-            try:
-                ed = t.get_earnings_dates(limit=8)
-                if ed is not None and not ed.empty:
-                    for d in ed.index:
-                        earn_rows.append({"symbol": sym,
-                                          "earnings_date": pd.Timestamp(d).tz_localize(None).normalize()})
-            except Exception:
-                pass  # earnings dates are best-effort; blackout degrades gracefully
+            earn_rows.extend(_earnings_dates_for(t, sym))
         except Exception as e:  # per-symbol failures must not kill the run
             print(f"[yfinance] WARN {sym}: {e}")
     if rows:
@@ -92,6 +85,75 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
         mdf["ingested_at"] = now
         store.append("security_master", mdf)
         print(f"[yfinance] flagged {len(etf_syms)} ETFs/funds (excluded from universe)")
+
+
+def _earnings_dates_for(t, sym: str) -> list[dict]:
+    """Best-effort earnings dates from yfinance, trying every API shape the
+    library has shipped. Returns [] on total failure — the blackout filter
+    degrades gracefully."""
+    dates = []
+    try:
+        ed = t.earnings_dates            # newer yfinance: property
+        if ed is not None and len(ed):
+            dates = list(ed.index)
+    except Exception:
+        pass
+    if not dates:
+        try:
+            ed = t.get_earnings_dates(limit=12)
+            if ed is not None and len(ed):
+                dates = list(ed.index)
+        except Exception:
+            pass
+    if not dates:
+        try:
+            cal = t.calendar             # dict with 'Earnings Date' list
+            for d in (cal or {}).get("Earnings Date", []):
+                dates.append(pd.Timestamp(d))
+        except Exception:
+            pass
+    out = []
+    for d in dates:
+        try:
+            ts = pd.Timestamp(d)
+            if ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            out.append({"symbol": sym, "earnings_date": ts.normalize()})
+        except Exception:
+            continue
+    return out
+
+
+def ingest_yf_earnings(store: PITStore, cfg: dict,
+                       symbols: list[str] | None = None) -> None:
+    """Standalone earnings-calendar crawl (`make earnings`) so the blackout
+    filter can be activated without re-running the full fundamentals crawl."""
+    import yfinance as yf
+    from ..universe import latest_security_master, non_stock_symbols
+
+    if symbols is None:
+        m = latest_security_master(store)
+        symbols = sorted(set(m["symbol"]) - non_stock_symbols(store))
+    now = pd.Timestamp.utcnow().tz_localize(None)
+    print(f"[earnings] crawling earnings dates for {len(symbols)} symbols...",
+          flush=True)
+    rows = []
+    for i, sym in enumerate(symbols):
+        if i and i % 50 == 0:
+            print(f"[earnings] {i}/{len(symbols)} done ({len(rows)} dates)", flush=True)
+        try:
+            rows.extend(_earnings_dates_for(yf.Ticker(sym), sym))
+        except Exception:
+            continue
+    if not rows:
+        print("[earnings] WARNING: no earnings dates retrieved at all — "
+              "yfinance may be blocked/rate-limited; blackout stays inactive")
+        return
+    edf = pd.DataFrame(rows).drop_duplicates()
+    edf["source_ts"] = edf["earnings_date"]
+    edf["ingested_at"] = now
+    store.append("earnings_calendar", edf)
+    print(f"[earnings] stored {len(edf)} earnings dates")
 
 
 def _get(frame: pd.DataFrame, row: str, col) -> float | None:
