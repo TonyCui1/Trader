@@ -42,11 +42,22 @@ SENSITIVITY_KEYS = [
 
 
 def run_all(cfg: dict, store: PITStore) -> dict:
+    from ..backtest.run import spy_benchmarks
+
     panels = compute_signal_panels(store, cfg)
     regime = compute_regime(store, cfg)
     base = run_backtest(store, cfg, panels, regime)
     bm = base.metrics
     checks: dict[str, dict] = {}
+
+    # Long-only baseline: a skill-free long portfolio still earns market
+    # exposure (beta). Shuffle/random checks therefore compare against the
+    # regime-filtered SPY benchmark, not against zero — "the shuffled
+    # strategy must show no SELECTION edge", which is what the spec's
+    # "≈ zero minus costs" means once beta is accounted for.
+    bench = spy_benchmarks(store, regime, base.daily.index, base.daily["rf_daily"])
+    beta_ann = bench["spy_with_regime_filter"]["net_annual_return"]
+    ALPHA_TOL = 0.02
 
     # 1. walk-forward ---------------------------------------------------------
     yearly = per_year(base.daily)
@@ -87,13 +98,15 @@ def run_all(cfg: dict, store: PITStore) -> dict:
 
     shuffled = run_backtest(store, cfg, panels, regime, composite_hook=shuffler)
     sm = shuffled.metrics
-    bad = sm["net_annual_return"] > 0.02 or sm["net_sharpe"] > 0.75
+    bad = sm["net_annual_return"] > beta_ann + ALPHA_TOL
     checks["shuffle_test"] = {
         "status": "red" if bad else "green",
         "shuffled_annual_return": sm["net_annual_return"],
         "shuffled_sharpe": sm["net_sharpe"],
-        "note": "shuffled signals 'work' — the framework leaks" if bad else
-                "shuffled signals earn ~zero minus costs, as they must",
+        "beta_benchmark_annual_return": beta_ann,
+        "note": ("shuffled signals BEAT their market-exposure benchmark — "
+                 "the framework leaks" if bad else
+                 "shuffled signals show no selection edge over market exposure"),
     }
 
     # 4. sub-periods ----------------------------------------------------------
@@ -140,13 +153,16 @@ def run_all(cfg: dict, store: PITStore) -> dict:
     rand = run_backtest(store, cfg, panels, regime, composite_hook=randomizer)
     rm = rand.metrics
     cost_load = rm["total_costs"] / cfg["backtest"]["initial_equity"]
-    ok = rm["total_costs"] > 0 and rm["net_annual_return"] < 0.05
+    ok = (rm["total_costs"] > 0
+          and rm["net_annual_return"] < beta_ann + ALPHA_TOL)
     checks["cost_sanity"] = {
         "status": "green" if ok else "red",
         "random_portfolio_annual_return": rm["net_annual_return"],
+        "beta_benchmark_annual_return": beta_ann,
         "random_portfolio_cost_load_pct": round(cost_load, 4),
-        "note": "random portfolio loses ~its cost load" if ok else
-                "random portfolio PROFITS — cost model or framework broken",
+        "note": ("random portfolio earns ~market exposure minus its cost load"
+                 if ok else
+                 "random portfolio BEATS market exposure — cost model or framework broken"),
     }
 
     return {"config_hash": cfg["_config_hash"], "base_metrics": bm,
