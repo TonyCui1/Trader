@@ -235,6 +235,9 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
                 if dollars < 0:
                     held = positions.get(sym, [0, 0.0])
                     sh = min(int(abs(dollars) / px), held[0])
+                    # a full exit must not strand a sub-1-share remainder
+                    if abs(dollars) >= 0.99 * held[0] * px:
+                        sh = held[0]
                     if sh <= 0:
                         continue
                     notional = sh * px

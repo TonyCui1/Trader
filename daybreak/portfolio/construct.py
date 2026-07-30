@@ -78,21 +78,32 @@ def target_portfolio(composite: pd.Series, vols: pd.Series, sectors: pd.Series,
         if sym in target.index:
             target[sym] = min(target[sym], current.get(sym, 0.0))
 
-    # 6. conviction + min-trade gates
+    # 6. conviction + min-trade gates. The min-trade gate applies to
+    # ADJUSTMENTS only: a full exit (target 0) always executes, however small —
+    # otherwise sub-threshold dust positions accumulate without bound and the
+    # max_positions cap is violated in spirit.
     trades = target - current
     for sym in trades.index:
         t = trades[sym]
         if t == 0:
             continue
-        if abs(t) <= p["min_trade_pct"]:
-            target[sym] = current[sym]          # too small -> HOLD
+        if abs(t) <= p["min_trade_pct"] and target[sym] > 0:
+            target[sym] = current[sym]          # small adjustment -> HOLD
         elif t > 0 and (pd.isna(composite.get(sym)) or composite.get(sym, 0) <= p["conviction_z_min"]):
             target[sym] = current[sym]          # increases need conviction
 
-    # 7. turnover brake
+    # 7. turnover brake. Full exits are served FIRST from the turnover budget
+    # and never scaled — scaling an exit recreates the dust problem the
+    # min-trade exemption above solves. Adjustments share what remains.
     trades = target - current
-    turnover = trades.abs().sum()
-    if turnover > p["max_daily_turnover"]:
-        target = current + trades * (p["max_daily_turnover"] / turnover)
+    exit_mask = (target == 0) & (current > 0)
+    exit_turnover = current[exit_mask].sum()
+    other = trades[~exit_mask]
+    other_turnover = other.abs().sum()
+    budget = max(p["max_daily_turnover"] - exit_turnover, 0.0)
+    if other_turnover > budget:
+        scaled = current[~exit_mask] + other * (budget / other_turnover
+                                                if other_turnover > 0 else 0.0)
+        target[~exit_mask] = scaled
 
     return target

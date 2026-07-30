@@ -62,3 +62,12 @@ def test_turnover_brake():
     t = target_portfolio(c, v, s, cur, ON, set(), CFG)
     turnover = (t - cur).abs().sum()
     assert turnover <= CFG["portfolio"]["max_daily_turnover"] + 1e-9
+
+
+def test_full_exits_bypass_min_trade_gate():
+    c, v, s, cur = _inputs()
+    held = cur.copy()
+    held["S29"] = 0.015                       # dust position, below min_trade_pct
+    c["S29"] = -2.0                           # score collapsed: not in target
+    t = target_portfolio(c, v, s, held, ON, set(), CFG)
+    assert t["S29"] == 0.0                    # exited despite being tiny
