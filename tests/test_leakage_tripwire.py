@@ -16,7 +16,15 @@ from daybreak.signals.compute import compute_signal_panels
 
 @pytest.fixture(scope="module")
 def leaky_setup(cfg_store):
+    from copy import deepcopy
     cfg, store = cfg_store
+    # The tripwire verifies the harness CAN catch a leak, independent of the
+    # production trading throttles: with tight min-trade/turnover caps a
+    # daily-horizon leak cannot be traded fast enough to look brilliant, so
+    # the tripwire runs with permissive execution settings.
+    cfg = deepcopy(cfg)
+    cfg["portfolio"]["min_trade_pct"] = 0.01
+    cfg["portfolio"]["max_daily_turnover"] = 0.20
     panels = compute_signal_panels(store, cfg)
     regime = compute_regime(store, cfg)
     prices = store.read("prices")
