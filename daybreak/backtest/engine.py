@@ -47,7 +47,7 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
                  ) -> BacktestResult:
     from ..signals.compute import SIGNAL_NAMES
 
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     prices["date"] = pd.to_datetime(prices["date"])
     stocks = prices[prices["symbol"] != "SPY"]
     close = stocks.pivot_table(index="date", columns="symbol", values="close").sort_index()
@@ -56,7 +56,7 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     adj = stocks.pivot_table(index="date", columns="symbol", values="adj_close").sort_index()
 
     warnings: list[str] = []
-    minute = store.read("minute_1030")
+    minute = store.read_latest("minute_1030", keys=["symbol", "date"])
     if not minute.empty:
         minute["date"] = pd.to_datetime(minute["date"])
         vwap = (minute[minute["symbol"] != "SPY"]
@@ -87,11 +87,11 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     vol60 = adj.pct_change(fill_method=None).rolling(
         cfg["portfolio"]["vol_lookback_days"]).std()
 
-    macro = store.read("macro")
+    macro = store.read_latest("macro", keys=["date"])
     macro["date"] = pd.to_datetime(macro["date"])
     rf = macro.set_index("date")["rf_daily"].reindex(close.index).fillna(0.0)
 
-    french = store.read("french_factors")
+    french = store.read_latest("french_factors", keys=["date"])
     if not french.empty:
         french["date"] = pd.to_datetime(french["date"])
         rf = french.set_index("date")["rf_daily"].reindex(close.index).ffill().fillna(rf)

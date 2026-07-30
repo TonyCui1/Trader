@@ -155,7 +155,7 @@ def run_all(cfg: dict, store: PITStore) -> dict:
 
 def decile_spreads(store: PITStore, cfg: dict, panels: dict) -> dict:
     """Phase 2 acceptance: decile spread per signal (top-bottom, fwd 21d)."""
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     prices["date"] = pd.to_datetime(prices["date"])
     P = (prices[prices["symbol"] != "SPY"]
          .pivot_table(index="date", columns="symbol", values="adj_close").sort_index())

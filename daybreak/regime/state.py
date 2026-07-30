@@ -21,11 +21,11 @@ EXPOSURE = {ON: 1.0, REDUCED: 0.5, OFF: 0.0}
 
 def compute_regime(store: PITStore, cfg: dict) -> pd.Series:
     r = cfg["regime"]
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     spy = (prices[prices["symbol"] == "SPY"]
            .assign(date=lambda d: pd.to_datetime(d["date"]))
            .set_index("date")["close"].sort_index())
-    macro = (store.read("macro")
+    macro = (store.read_latest("macro", keys=["date"])
              .assign(date=lambda d: pd.to_datetime(d["date"]))
              .set_index("date").sort_index())
 

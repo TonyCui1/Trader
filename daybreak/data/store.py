@@ -82,6 +82,19 @@ class PITStore:
         df = self.con.execute(q, params).df()
         return df.drop(columns=["row_hash"], errors="ignore")
 
+    def read_latest(self, table: str, keys: list[str],
+                    as_of: pd.Timestamp | None = None) -> pd.DataFrame:
+        """Read with 'latest version wins' semantics: when re-ingestion stored
+        multiple versions of the same business row (e.g. restated adjusted
+        prices), keep only the newest ingested_at per key. The full history
+        stays in the table — this is a view, not a mutation."""
+        df = self.read(table, as_of=as_of)
+        if df.empty:
+            return df
+        return (df.sort_values("ingested_at")
+                .drop_duplicates(subset=keys, keep="last")
+                .reset_index(drop=True))
+
     def table_hash(self, table: str) -> str:
         """Deterministic content hash of a table's business columns, used to
         verify byte-identical re-runs."""

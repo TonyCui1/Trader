@@ -26,7 +26,7 @@ def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]
     """Returns {signal_name: DataFrame[date x symbol]} of winsorized z-scores,
     plus 'composite'."""
     s = cfg["signals"]
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     prices = prices[prices["symbol"] != "SPY"]
     prices["date"] = pd.to_datetime(prices["date"])
     P = prices.pivot_table(index="date", columns="symbol", values="adj_close").sort_index()

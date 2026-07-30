@@ -26,7 +26,7 @@ SPY_SWITCH_COST = 0.0002  # flat 2bp per unit exposure change for the benchmark
 
 def spy_benchmarks(store: PITStore, regime: pd.Series, daily_index: pd.DatetimeIndex,
                    rf: pd.Series) -> dict:
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     prices["date"] = pd.to_datetime(prices["date"])
     spy = (prices[prices["symbol"] == "SPY"].set_index("date")["adj_close"]
            .sort_index().reindex(daily_index).ffill())

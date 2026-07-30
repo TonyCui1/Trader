@@ -39,7 +39,7 @@ def compute_decision(store: PITStore, cfg: dict, current_shares: dict[str, int]
     panels = compute_signal_panels(store, cfg)
     regime = compute_regime(store, cfg)
 
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     prices["date"] = pd.to_datetime(prices["date"])
     stocks = prices[prices["symbol"] != "SPY"]
     close = stocks.pivot_table(index="date", columns="symbol", values="close").sort_index()

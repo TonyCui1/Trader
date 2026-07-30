@@ -23,7 +23,7 @@ def latest_security_master(store: PITStore) -> pd.DataFrame:
 
 
 def build_universe(store: PITStore, cfg: dict, fixture: bool = False) -> int:
-    prices = store.read("prices")
+    prices = store.read_latest("prices", keys=["symbol", "date"])
     master = latest_security_master(store)
     if prices.empty or master.empty:
         raise RuntimeError("prices/security_master must be ingested before universe build")
