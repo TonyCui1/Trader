@@ -39,8 +39,10 @@ portfolio:
   max_weight_per_sector: 0.25
   earnings_blackout_days: 2   # no NEW position if earnings within next N trading days
   conviction_z_min: 0.5       # trade only if composite z exceeds this ...
-  min_trade_pct: 0.01         # ... and the trade moves the position by >1% of portfolio
-  max_daily_turnover: 0.20    # turnover brake: max fraction of portfolio traded per day
+  min_trade_pct: 0.025        # ... and the trade moves the position by >2.5% of
+                              # portfolio (raised from 1%: at 1% the system churned
+                              # ~7%/day and costs ate the entire gross gain)
+  max_daily_turnover: 0.08    # turnover brake (lowered from 20% for the same reason)
   circuit_breaker_dd: 0.12    # drawdown from high-water mark that flattens to cash
   restart_after_halt: false   # manual flag: must be set true to resume after breaker
   circuit_breaker_cooldown_days: 21  # BACKTEST ONLY: auto-resume after N trading
