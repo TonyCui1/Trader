@@ -28,3 +28,17 @@ def test_manual_restart_resumes_and_resets_high_water():
     assert not b.check(80_000, "d3")          # resumes
     assert b.high_water == 80_000             # HWM reset at restart
     assert not b.check(75_000, "d4")          # -6.25% from new HWM: fine
+
+
+def test_backtest_cooldown_auto_resumes():
+    cfg = deepcopy(CFG)
+    b = CircuitBreaker(cfg, cooldown_days=3)
+    b.check(100_000, "d1")
+    assert b.check(85_000, "d2")              # tripped (-15%)
+    assert b.check(85_000, "d3")              # halted day 1
+    assert b.check(85_000, "d4")              # halted day 2
+    assert not b.check(85_000, "d5")          # cooldown reached: resumed
+    assert b.high_water == 85_000             # HWM reset on resume
+    assert len(b.trip_log) == 1
+    assert b.check(74_000, "d6")              # can trip again from new HWM
+    assert len(b.trip_log) == 2

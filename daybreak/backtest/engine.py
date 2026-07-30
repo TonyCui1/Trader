@@ -137,7 +137,8 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     if end_cfg:
         dates = dates[dates <= pd.Timestamp(str(end_cfg))]
 
-    breaker = CircuitBreaker(cfg)
+    breaker = CircuitBreaker(
+        cfg, cooldown_days=cfg["portfolio"].get("circuit_breaker_cooldown_days"))
     cash = float(cfg["backtest"]["initial_equity"])
     positions: dict[str, list] = {}  # sym -> [shares, avg_cost]
     daily_rows, trade_rows, expo_rows = [], [], []
@@ -304,8 +305,12 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     trades = pd.DataFrame(trade_rows)
     exposures = pd.DataFrame(expo_rows).set_index("date") if expo_rows else pd.DataFrame()
     metrics = compute_metrics(daily, trades, cfg)
-    if breaker.trip_info:
-        metrics["circuit_breaker_tripped"] = breaker.trip_info
-        warnings.append(f"circuit breaker tripped: {breaker.trip_info}")
+    if breaker.trip_log:
+        metrics["circuit_breaker_trips"] = breaker.trip_log
+        warnings.append(
+            f"circuit breaker tripped {len(breaker.trip_log)}x "
+            f"(backtest auto-resumes after "
+            f"{cfg['portfolio'].get('circuit_breaker_cooldown_days')} trading days; "
+            f"live trading requires manual restart): {breaker.trip_log}")
     return BacktestResult(daily, trades, exposures, metrics,
                           cfg["_config_hash"], warnings)

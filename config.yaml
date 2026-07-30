@@ -43,6 +43,8 @@ portfolio:
   max_daily_turnover: 0.20    # turnover brake: max fraction of portfolio traded per day
   circuit_breaker_dd: 0.12    # drawdown from high-water mark that flattens to cash
   restart_after_halt: false   # manual flag: must be set true to resume after breaker
+  circuit_breaker_cooldown_days: 21  # BACKTEST ONLY: auto-resume after N trading
+                              # days (live/paper always requires the manual flag)
 
 costs:
   slippage_k: 0.1             # slippage = k * sqrt(order_size / ADV)

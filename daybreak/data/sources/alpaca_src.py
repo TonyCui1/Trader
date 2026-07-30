@@ -129,10 +129,13 @@ def ingest_alpaca_prices(store: PITStore, cfg: dict) -> None:
     else:
         symbols = master["symbol"].tolist()
 
-    start = str(cfg["backtest"]["start"])
+    # fetch a warmup buffer before backtest.start: momentum needs ~13 months
+    # of history before the first tradable signal exists
+    start = str((pd.Timestamp(str(cfg["backtest"]["start"]))
+                 - pd.Timedelta(days=450)).date())
     end = str(pd.Timestamp.utcnow().date())
-    print(f"[alpaca] fetching daily history {start} -> {end} for "
-          f"{len(symbols)} symbols...", flush=True)
+    print(f"[alpaca] fetching daily history {start} -> {end} "
+          f"(incl. ~15mo signal warmup) for {len(symbols)} symbols...", flush=True)
     bars = fetch_daily_bars(symbols + ["SPY"], start, end, verbose=True)
     if bars.empty:
         raise RuntimeError("Alpaca returned no bars")
