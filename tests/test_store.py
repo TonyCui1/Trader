@@ -45,3 +45,24 @@ def test_missing_pit_columns_rejected(tmp_path):
     store = PITStore(tmp_path)
     with pytest.raises(ValueError):
         store.append("t", pd.DataFrame({"x": [1]}))
+
+
+def test_etf_symbols_excluded_from_universe(tmp_path):
+    import pandas as pd
+
+    from daybreak.data.universe import non_stock_symbols
+
+    store = PITStore(tmp_path)
+    now = pd.Timestamp("2024-01-01")
+    master = pd.DataFrame({
+        "symbol": ["AAPL", "SPYV"], "sector": ["Tech", "Unknown"],
+        "source_ts": now, "ingested_at": now,
+    })
+    store.append("security_master", master)
+    assert non_stock_symbols(store) == set()
+    # sector enrichment later flags SPYV as a fund
+    flag = pd.DataFrame({"symbol": ["SPYV"], "sector": ["ETF"],
+                         "source_ts": now + pd.Timedelta(days=1),
+                         "ingested_at": now + pd.Timedelta(days=1)})
+    store.append("security_master", flag)
+    assert non_stock_symbols(store) == {"SPYV"}

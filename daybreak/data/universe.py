@@ -12,6 +12,9 @@ import pandas as pd
 from .store import PITStore
 
 
+EXCLUDED_SECTORS = {"ETF"}  # funds are not stocks: out of the universe entirely
+
+
 def latest_security_master(store: PITStore) -> pd.DataFrame:
     """One row per symbol, newest ingested_at wins (sector enrichment appends
     fresh rows on top of the append-only history)."""
@@ -20,6 +23,16 @@ def latest_security_master(store: PITStore) -> pd.DataFrame:
         return m
     return (m.sort_values("ingested_at")
             .drop_duplicates(subset="symbol", keep="last"))
+
+
+def non_stock_symbols(store: PITStore) -> set:
+    """Symbols flagged as funds/ETFs in the latest security master. The spec's
+    universe is top-N *stocks* (Russell 1000 proxy); Alpaca's us_equity asset
+    class also contains ETFs, which `make sectors` flags via quoteType."""
+    m = latest_security_master(store)
+    if m.empty:
+        return set()
+    return set(m[m["sector"].isin(EXCLUDED_SECTORS)]["symbol"])
 
 
 def build_universe(store: PITStore, cfg: dict, fixture: bool = False) -> int:
@@ -31,8 +44,10 @@ def build_universe(store: PITStore, cfg: dict, fixture: bool = False) -> int:
     size = cfg["universe"]["fixture_size"] if fixture else cfg["universe"]["size"]
     lookback = cfg["universe"]["adv_lookback_days"]
     sector_of = dict(zip(master["symbol"], master["sector"]))
+    etfs = non_stock_symbols(store)
 
-    prices = prices[prices["symbol"] != "SPY"].copy()
+    prices = prices[(prices["symbol"] != "SPY")
+                    & ~prices["symbol"].isin(etfs)].copy()
     prices["date"] = pd.to_datetime(prices["date"])
     prices["dollar_vol"] = prices["close"] * prices["volume"]
 
@@ -63,6 +78,7 @@ def universe_for_date(store: PITStore, date: pd.Timestamp,
     uni = store.read("universe", as_of=as_of)
     if uni.empty:
         return uni
+    uni = uni[~uni["symbol"].isin(non_stock_symbols(store))]
     uni["month"] = pd.to_datetime(uni["month"])
     months = uni["month"][uni["month"] <= pd.Timestamp(date)]
     if months.empty:

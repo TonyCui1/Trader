@@ -25,9 +25,11 @@ SIGNAL_NAMES = ["momentum", "reversal", "value", "quality", "lowvol", "pead"]
 def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]:
     """Returns {signal_name: DataFrame[date x symbol]} of winsorized z-scores,
     plus 'composite'."""
+    from ..data.universe import non_stock_symbols
     s = cfg["signals"]
     prices = store.read_latest("prices", keys=["symbol", "date"])
-    prices = prices[prices["symbol"] != "SPY"]
+    prices = prices[(prices["symbol"] != "SPY")
+                    & ~prices["symbol"].isin(non_stock_symbols(store))]
     prices["date"] = pd.to_datetime(prices["date"])
     P = prices.pivot_table(index="date", columns="symbol", values="adj_close").sort_index()
     rets = P.pct_change(fill_method=None)

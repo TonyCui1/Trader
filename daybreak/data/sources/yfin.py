@@ -40,16 +40,20 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
     now = pd.Timestamp.utcnow().tz_localize(None)
     print(f"[yfinance] crawling fundamentals for {len(symbols)} symbols "
           "(slow — expect 1-3s each)...", flush=True)
-    rows, earn_rows = [], []
+    rows, earn_rows, etf_syms = [], [], []
     for i, sym in enumerate(symbols):
         if i and i % 50 == 0:
             print(f"[yfinance] {i}/{len(symbols)} done", flush=True)
         try:
             t = yf.Ticker(sym)
+            info = t.info
+            if info.get("quoteType") in ("ETF", "MUTUALFUND", "INDEX"):
+                etf_syms.append(sym)   # funds have no fundamentals; flag + skip
+                continue
             q = t.quarterly_income_stmt
             bs = t.quarterly_balance_sheet
             cf = t.quarterly_cashflow
-            info_shares = t.info.get("sharesOutstanding")
+            info_shares = info.get("sharesOutstanding")
             for col in q.columns:
                 rows.append({
                     "symbol": sym, "fiscal_end": pd.Timestamp(col),
@@ -82,6 +86,12 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
         edf["ingested_at"] = now
         store.append("earnings_calendar", edf)
         print(f"[yfinance] earnings calendar: {len(edf)} rows")
+    if etf_syms:
+        mdf = pd.DataFrame({"symbol": etf_syms, "sector": "ETF"})
+        mdf["source_ts"] = now
+        mdf["ingested_at"] = now
+        store.append("security_master", mdf)
+        print(f"[yfinance] flagged {len(etf_syms)} ETFs/funds (excluded from universe)")
 
 
 def _get(frame: pd.DataFrame, row: str, col) -> float | None:
@@ -109,11 +119,18 @@ def enrich_sectors(store: PITStore, cfg: dict) -> None:
         return
     print(f"[sectors] enriching {len(todo)} symbols (slow)...", flush=True)
     rows = []
+    n_etf = 0
     for i, sym in enumerate(todo):
         if i and i % 50 == 0:
-            print(f"[sectors] {i}/{len(todo)} done", flush=True)
+            print(f"[sectors] {i}/{len(todo)} done ({n_etf} ETFs flagged)", flush=True)
         try:
-            sector = yf.Ticker(sym).info.get("sector") or "Unknown"
+            info = yf.Ticker(sym).info
+            # funds are not stocks: flag them so the universe excludes them
+            if info.get("quoteType") in ("ETF", "MUTUALFUND", "INDEX"):
+                sector = "ETF"
+                n_etf += 1
+            else:
+                sector = info.get("sector") or "Unknown"
         except Exception:
             sector = "Unknown"
         if sector != "Unknown":

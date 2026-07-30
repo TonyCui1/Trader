@@ -111,12 +111,14 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     sectors = pd.Series(dict(zip(master["symbol"], master["sector"])))
 
     # precompute PIT universe membership per month (avoids per-day DB reads)
+    from ..data.universe import non_stock_symbols
+    etfs = non_stock_symbols(store)
     uni_all = store.read("universe")
     uni_by_month: dict[pd.Timestamp, set] = {}
     if not uni_all.empty:
         uni_all["month"] = pd.to_datetime(uni_all["month"])
         for m, grp in uni_all.groupby("month"):
-            uni_by_month[m] = set(grp["symbol"])
+            uni_by_month[m] = set(grp["symbol"]) - etfs
     uni_months = sorted(uni_by_month)
 
     composite_panel = panels["composite"].reindex(index=close.index, columns=close.columns)
