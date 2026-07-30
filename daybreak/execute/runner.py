@@ -57,10 +57,13 @@ def compute_decision(store: PITStore, cfg: dict, current_shares: dict[str, int]
     state = regime.loc[t_prev]
 
     earnings = store.read("earnings_calendar")
-    earnings["earnings_date"] = pd.to_datetime(earnings["earnings_date"])
-    upcoming = set(next_trading_days(
-        decision_date, cfg["portfolio"]["earnings_blackout_days"])) | {decision_date}
-    blackout = set(earnings[earnings["earnings_date"].isin(upcoming)]["symbol"])
+    if not earnings.empty:
+        earnings["earnings_date"] = pd.to_datetime(earnings["earnings_date"])
+        upcoming = set(next_trading_days(
+            decision_date, cfg["portfolio"]["earnings_blackout_days"])) | {decision_date}
+        blackout = set(earnings[earnings["earnings_date"].isin(upcoming)]["symbol"])
+    else:
+        blackout = set()
 
     last_close = close.loc[t_prev]
     pos_value = {s: sh * last_close.get(s, 0.0) for s, sh in current_shares.items()}

@@ -59,7 +59,10 @@ def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]
     stack = np.dstack([z[n].reindex(index=P.index, columns=P.columns).to_numpy()
                        for n in SIGNAL_NAMES])
     n_avail = (~np.isnan(stack)).sum(axis=2)
-    composite = np.where(n_avail >= 3, np.nanmean(stack, axis=2), np.nan)
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN slices
+        composite = np.where(n_avail >= 3, np.nanmean(stack, axis=2), np.nan)
     z["composite"] = pd.DataFrame(composite, index=P.index, columns=P.columns)
     z["_sectors"] = sectors.to_frame("sector")
     return z

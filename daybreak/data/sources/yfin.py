@@ -40,7 +40,7 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
     now = pd.Timestamp.utcnow().tz_localize(None)
     print(f"[yfinance] crawling fundamentals for {len(symbols)} symbols "
           "(slow — expect 1-3s each)...", flush=True)
-    rows = []
+    rows, earn_rows = [], []
     for i, sym in enumerate(symbols):
         if i and i % 50 == 0:
             print(f"[yfinance] {i}/{len(symbols)} done", flush=True)
@@ -60,15 +60,28 @@ def ingest_yf_fundamentals(store: PITStore, cfg: dict,
                     "fcf": _get(cf, "Free Cash Flow", col),
                     "shares": info_shares,
                 })
+            try:
+                ed = t.get_earnings_dates(limit=8)
+                if ed is not None and not ed.empty:
+                    for d in ed.index:
+                        earn_rows.append({"symbol": sym,
+                                          "earnings_date": pd.Timestamp(d).tz_localize(None).normalize()})
+            except Exception:
+                pass  # earnings dates are best-effort; blackout degrades gracefully
         except Exception as e:  # per-symbol failures must not kill the run
             print(f"[yfinance] WARN {sym}: {e}")
-    if not rows:
-        return
-    df = pd.DataFrame(rows).dropna(subset=["fiscal_end"])
-    df["source_ts"] = df["fiscal_end"]
-    df["ingested_at"] = now  # honest: snapshot data, seen today
-    store.append("fundamentals", df)
-    print(f"[yfinance] fundamentals: {len(df)} rows (NOT point-in-time — flagged)")
+    if rows:
+        df = pd.DataFrame(rows).dropna(subset=["fiscal_end"])
+        df["source_ts"] = df["fiscal_end"]
+        df["ingested_at"] = now  # honest: snapshot data, seen today
+        store.append("fundamentals", df)
+        print(f"[yfinance] fundamentals: {len(df)} rows (NOT point-in-time — flagged)")
+    if earn_rows:
+        edf = pd.DataFrame(earn_rows).drop_duplicates()
+        edf["source_ts"] = edf["earnings_date"]
+        edf["ingested_at"] = now
+        store.append("earnings_calendar", edf)
+        print(f"[yfinance] earnings calendar: {len(edf)} rows")
 
 
 def _get(frame: pd.DataFrame, row: str, col) -> float | None:

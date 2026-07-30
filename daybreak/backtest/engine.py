@@ -97,10 +97,14 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
         rf = french.set_index("date")["rf_daily"].reindex(close.index).ffill().fillna(rf)
 
     earnings = store.read("earnings_calendar")
-    earnings["earnings_date"] = pd.to_datetime(earnings["earnings_date"])
     earnings_by_day: dict[pd.Timestamp, set] = {}
-    for _, row in earnings.iterrows():
-        earnings_by_day.setdefault(row["earnings_date"].normalize(), set()).add(row["symbol"])
+    if not earnings.empty:
+        earnings["earnings_date"] = pd.to_datetime(earnings["earnings_date"])
+        for _, row in earnings.iterrows():
+            earnings_by_day.setdefault(row["earnings_date"].normalize(), set()).add(row["symbol"])
+    else:
+        warnings.append("earnings_calendar is empty — the earnings blackout "
+                        "filter is inactive (run the full `make ingest`)")
 
     from ..data.universe import latest_security_master
     master = latest_security_master(store)
