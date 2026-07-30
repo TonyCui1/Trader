@@ -127,7 +127,11 @@ def ingest_alpaca_prices(store: PITStore, cfg: dict) -> None:
         print(f"[alpaca] kept top {len(symbols)} by dollar volume "
               "(sectors start as 'Unknown'; run `make sectors` to enrich)")
     else:
-        symbols = master["symbol"].tolist()
+        from ..universe import latest_security_master, non_stock_symbols
+        latest = latest_security_master(store)
+        # one row per symbol, funds excluded — they are outside the universe
+        # and SPY/HYG/LQD come from their own loaders
+        symbols = sorted(set(latest["symbol"]) - non_stock_symbols(store))
 
     # fetch a warmup buffer before backtest.start: momentum needs ~13 months
     # of history before the first tradable signal exists
