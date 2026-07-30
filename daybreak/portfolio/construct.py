@@ -40,14 +40,20 @@ def target_portfolio(composite: pd.Series, vols: pd.Series, sectors: pd.Series,
     if scored.empty:
         return current  # no information -> no trade (CASH is the default)
 
-    # 2. top decile, then best max_positions
-    cutoff = scored.quantile(1 - p["top_fraction"])
-    pool = scored[scored >= cutoff].sort_values(ascending=False)
-    selected = list(pool.head(p["max_positions"]).index)
+    # 2. hysteresis selection (thermostat gap against boundary churn):
+    #    ENTER only from the top `top_fraction`; KEEP a held name until it
+    #    falls below the wider `exit_fraction` line. Names drifting between
+    #    the two lines are held untouched — noise pays no trading costs.
+    entry_cut = scored.quantile(1 - p["top_fraction"])
+    exit_cut = scored.quantile(1 - p["exit_fraction"])
+    held = [s for s in current[current > 0].index
+            if s in scored.index and scored[s] >= exit_cut]
 
-    # 3. blackout: strip names that would be NEW positions
-    selected = [s for s in selected
-                if not (s in blackout and current.get(s, 0.0) <= 0)]
+    pool = scored[scored >= entry_cut].sort_values(ascending=False)
+    # 3. blackout: strip names that would be NEW positions (holds may stay)
+    entries = [s for s in pool.index
+               if s not in held and not (s in blackout and current.get(s, 0.0) <= 0)]
+    selected = held + entries[:max(0, p["max_positions"] - len(held))]
 
     if not selected:
         return pd.Series(0.0, index=idx)

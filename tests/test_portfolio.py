@@ -71,3 +71,18 @@ def test_full_exits_bypass_min_trade_gate():
     c["S29"] = -2.0                           # score collapsed: not in target
     t = target_portfolio(c, v, s, held, ON, set(), CFG)
     assert t["S29"] == 0.0                    # exited despite being tiny
+
+
+def test_hysteresis_keeps_gray_zone_holdings():
+    c, v, s, cur = _inputs()
+    # 30 names scored 3.0 down to 0.1; entry line = top 10% (~top 3),
+    # exit line = top 20% (~top 6).
+    held = cur.copy()
+    held["S4"] = 0.05                         # held, in the gray zone (rank 5)
+    t = target_portfolio(c, v, s, held, ON, set(), CFG)
+    assert t["S4"] > 0.0                      # kept: above exit line
+    # a held name clearly below the exit line is sold
+    held2 = cur.copy()
+    held2["S25"] = 0.05                       # held, rank 26: well below exit line
+    t2 = target_portfolio(c, v, s, held2, ON, set(), CFG)
+    assert t2["S25"] == 0.0

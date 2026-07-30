@@ -32,7 +32,10 @@ regime:
 
 portfolio:
   max_positions: 20
-  top_fraction: 0.10          # candidate pool = top decile of composite
+  top_fraction: 0.10          # ENTRY line: new positions come from the top decile
+  exit_fraction: 0.20         # EXIT line (hysteresis): held names are kept until
+                              # they fall below the top 20% — the thermostat gap
+                              # that stops boundary churn from eating the edge
   target_vol_annual: 0.10     # portfolio vol target
   vol_lookback_days: 60
   max_weight_per_name: 0.08
