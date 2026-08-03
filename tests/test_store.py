@@ -66,3 +66,21 @@ def test_etf_symbols_excluded_from_universe(tmp_path):
                          "ingested_at": now + pd.Timedelta(days=1)})
     store.append("security_master", flag)
     assert non_stock_symbols(store) == {"SPYV"}
+
+
+def test_seed_master_round_trip(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from daybreak.data import seeds
+    from daybreak.data.seeds import export_security_master, load_seed_master
+
+    monkeypatch.setattr(seeds, "SEED_MASTER", tmp_path / "security_master.csv")
+    store = PITStore(tmp_path / "pit")
+    now = pd.Timestamp("2024-01-01")
+    store.append("security_master", pd.DataFrame({
+        "symbol": ["AAPL", "SPYV"], "sector": ["Tech", "ETF"],
+        "source_ts": now, "ingested_at": now}))
+    export_security_master(store)
+    seed = load_seed_master()
+    assert set(seed["symbol"]) == {"AAPL", "SPYV"}
+    assert seed.set_index("symbol").loc["SPYV", "sector"] == "ETF"

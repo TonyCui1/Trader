@@ -1,0 +1,135 @@
+# Daily paper-trading run on GitHub's free runners (public repo = free minutes).
+#
+# Design for ephemeral machines:
+# - big state (PIT price store) persists via actions/cache; on a cache miss the
+#   ingest rebuilds it from scratch (slower, self-healing)
+# - small critical state (security master with sector/ETF labels, decision log,
+#   slippage log) is exported and committed back to the repo each run
+# - the schedule fires early (GH cron can lag 5-30 min) and the job WAITS
+#   until 10:28 America/New_York before submitting, so DST is handled and the
+#   spec's hardcoded 10:30 ET decision time is honored year-round
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   ALPACA_API_KEY, ALPACA_SECRET_KEY   (paper account keys)
+
+name: paper-trade
+
+on:
+  schedule:
+    - cron: "5 13 * * 1-5"   # 13:05 UTC: 9:05 ET (EDT) / 8:05 ET (EST) start
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-trade
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/stock-trading-model-plan-3mpudt
+
+      - name: Skip on non-trading days
+        id: cal
+        run: |
+          pip install --quiet pandas-market-calendars pandas
+          python3 - <<'EOF'
+          import os, sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          import pandas_market_calendars as pmc
+          today = datetime.now(ZoneInfo("America/New_York")).date()
+          sched = pmc.get_calendar("NYSE").schedule(str(today), str(today))
+          open_today = not sched.empty
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"open={'yes' if open_today else 'no'}\n")
+          print("market open today:", open_today)
+          EOF
+
+      - uses: actions/setup-python@v5
+        if: steps.cal.outputs.open == 'yes'
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.cal.outputs.open == 'yes'
+        run: pip install -r requirements.txt
+
+      - name: Restore PIT store cache
+        if: steps.cal.outputs.open == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: pit_data
+          key: pit-data-v1-${{ github.run_id }}
+          restore-keys: |
+            pit-data-v1-
+
+      - name: Ingest fresh data
+        if: steps.cal.outputs.open == 'yes'
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: make ingest-fast
+
+      - name: Wait until 10:28 ET
+        if: steps.cal.outputs.open == 'yes'
+        run: |
+          python3 - <<'EOF'
+          import time
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          et = ZoneInfo("America/New_York")
+          target = datetime.now(et).replace(hour=10, minute=28, second=0, microsecond=0)
+          while datetime.now(et) < target:
+              remaining = (target - datetime.now(et)).total_seconds()
+              print(f"waiting {remaining/60:.1f} min until 10:28 ET", flush=True)
+              time.sleep(min(remaining, 300))
+          EOF
+
+      - name: Submit decision (10:30 ET orders)
+        if: steps.cal.outputs.open == 'yes'
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: python3 -m daybreak.execute.runner
+
+      - name: Wait until 11:00 ET, then reconcile
+        if: steps.cal.outputs.open == 'yes'
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: |
+          python3 - <<'EOF'
+          import time
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          et = ZoneInfo("America/New_York")
+          target = datetime.now(et).replace(hour=11, minute=0, second=0, microsecond=0)
+          while datetime.now(et) < target:
+              time.sleep(min((target - datetime.now(et)).total_seconds(), 300))
+          EOF
+          python3 -m daybreak.execute.reconcile
+
+      - name: Export seeds + logs and commit
+        if: steps.cal.outputs.open == 'yes'
+        run: |
+          python3 -c "
+          from daybreak.config import load_config
+          from daybreak.data.store import PITStore
+          from daybreak.data.seeds import export_security_master
+          cfg = load_config()
+          export_security_master(PITStore(cfg['run']['data_dir']))"
+          mkdir -p logs
+          cp pit_data/decisions.jsonl logs/decisions.jsonl || true
+          git config user.name "daybreak-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add seeds logs
+          git diff --cached --quiet || git commit -m "paper-trade: daily state $(date -u +%F) [skip ci]"
+          git pull --rebase origin claude/stock-trading-model-plan-3mpudt
+          git push origin HEAD:claude/stock-trading-model-plan-3mpudt

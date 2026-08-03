@@ -108,6 +108,19 @@ def ingest_alpaca_prices(store: PITStore, cfg: dict) -> None:
     master = store.read("security_master")
     now = pd.Timestamp.utcnow().tz_localize(None)
     if master.empty:
+        # fresh store: prefer the committed seed (keeps sector labels + ETF
+        # flags without re-crawling) over the from-scratch ranking bootstrap
+        from ..seeds import load_seed_master
+        seed = load_seed_master()
+        if seed is not None:
+            sm = seed.copy()
+            sm["source_ts"] = now
+            sm["ingested_at"] = now
+            store.append("security_master", sm)
+            master = store.read("security_master")
+            print(f"[alpaca] bootstrapped security_master from seed "
+                  f"({len(seed)} symbols)")
+    if master.empty:
         all_syms = fetch_active_symbols()
         print(f"[alpaca] {len(all_syms)} active US equities; ranking by recent "
               "dollar volume (one-time bootstrap, a few minutes)...", flush=True)
