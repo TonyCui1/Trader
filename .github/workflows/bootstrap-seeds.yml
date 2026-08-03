@@ -1,0 +1,67 @@
+# One-time manual bootstrap: builds the PIT store from scratch, crawls sector
+# labels + ETF flags (slow, ~1-2h), and commits seeds/security_master.csv so
+# every future paper-trade run starts with a correct universe.
+# Trigger from the Actions tab -> bootstrap-seeds -> Run workflow.
+
+name: bootstrap-seeds
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-trade
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/stock-trading-model-plan-3mpudt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Save PIT store to cache when done
+        uses: actions/cache@v4
+        with:
+          path: pit_data
+          key: pit-data-v1-bootstrap-${{ github.run_id }}
+          restore-keys: |
+            pit-data-v1-
+
+      - name: Full price ingest (fresh store)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: make ingest-fast
+
+      - name: Crawl sectors + flag ETFs (slow)
+        run: make sectors
+
+      - name: Fetch upcoming earnings dates
+        run: make earnings
+
+      - name: Export seed and commit
+        run: |
+          python3 -c "
+          from daybreak.config import load_config
+          from daybreak.data.store import PITStore
+          from daybreak.data.seeds import export_security_master
+          cfg = load_config()
+          print(export_security_master(PITStore(cfg['run']['data_dir'])))"
+          git config user.name "daybreak-bot"
+          git config user.email "daybreak-bot@users.noreply.github.com"
+          git add seeds
+          git diff --cached --quiet || git commit -m "Bootstrap security master seed [skip ci]"
+          git pull --rebase origin claude/stock-trading-model-plan-3mpudt
+          git push origin HEAD:claude/stock-trading-model-plan-3mpudt
