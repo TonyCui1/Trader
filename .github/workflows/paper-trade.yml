@@ -8,6 +8,14 @@
 # - the schedule fires early (GH cron can lag 5-30 min) and the job WAITS
 #   until 10:28 America/New_York before submitting, so DST is handled and the
 #   spec's hardcoded 10:30 ET decision time is honored year-round
+# - GitHub's schedule trigger is best-effort and has been observed to fire
+#   HOURS late (queue delays, especially on repos with sparse activity). The
+#   "Check we're not too late" step refuses to trade once the window has
+#   passed (10:45 ET cutoff) rather than submitting orders late against a
+#   stale reference price —
+#   trading off-schedule would silently violate the spec's hardcoded 10:30 ET
+#   decision time. A late/skipped day shows green with a clear log line, not
+#   a red failure, since it isn't a code error.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   ALPACA_API_KEY, ALPACA_SECRET_KEY   (paper account keys)
@@ -52,17 +60,45 @@ jobs:
           print("market open today:", open_today)
           EOF
 
-      - uses: actions/setup-python@v5
+      - name: Check we're not too late to trade today
+        id: window
         if: steps.cal.outputs.open == 'yes'
+        run: |
+          python3 - <<'EOF'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          et = ZoneInfo("America/New_York")
+          now = datetime.now(et)
+          # generous cutoff: ingest + wait need real time; if we're already
+          # past 10:45 ET, the 10:30 decision window is unrecoverable today
+          cutoff = now.replace(hour=10, minute=45, second=0, microsecond=0)
+          too_late = now > cutoff
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"too_late={'yes' if too_late else 'no'}\n")
+          if too_late:
+              print(f"SKIPPING: run started at {now.strftime('%H:%M:%S %Z')}, "
+                    f"past the 10:45 ET cutoff for the 10:30 decision window. "
+                    "GitHub's scheduler likely queued this run late. No orders "
+                    "will be submitted today — trading tomorrow at the correct "
+                    "time is safer than trading late on a stale reference "
+                    "price. This is expected behavior, not a bug.")
+          else:
+              print(f"on time: run started at {now.strftime('%H:%M:%S %Z')}, "
+                    "within the decision window")
+          EOF
+
+      - uses: actions/setup-python@v5
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         run: pip install -r requirements.txt
 
       - name: Restore PIT store cache
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         uses: actions/cache@v4
         with:
           path: pit_data
@@ -71,14 +107,14 @@ jobs:
             pit-data-v1-
 
       - name: Ingest fresh data
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: make ingest-fast
 
       - name: Wait until 10:28 ET
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         run: |
           python3 - <<'EOF'
           import time
@@ -93,14 +129,14 @@ jobs:
           EOF
 
       - name: Submit decision (10:30 ET orders)
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: python3 -m daybreak.execute.runner
 
       - name: Wait until 11:00 ET, then reconcile
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
@@ -116,8 +152,30 @@ jobs:
           EOF
           python3 -m daybreak.execute.reconcile
 
+      - name: Record a skipped-day entry (too late to trade)
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'yes'
+        run: |
+          mkdir -p pit_data
+          python3 -c "
+          from daybreak.config import load_config
+          from daybreak.report.decision_log import DecisionLog
+          cfg = load_config()
+          DecisionLog(cfg['run']['data_dir']).append({
+              'decision': 'SKIPPED_TOO_LATE', 'config_hash': cfg['_config_hash'],
+              'note': 'GitHub scheduler queued this run past the 10:45 ET '
+                      'cutoff for the 10:30 decision window; no orders '
+                      'submitted to avoid trading on a stale reference price.'})"
+          mkdir -p logs
+          cp pit_data/decisions.jsonl logs/decisions.jsonl
+          git config user.name "daybreak-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add logs
+          git diff --cached --quiet || git commit -m "paper-trade: skipped (late start) $(date -u +%F) [skip ci]"
+          git pull --rebase origin claude/stock-trading-model-plan-3mpudt
+          git push origin HEAD:claude/stock-trading-model-plan-3mpudt
+
       - name: Export seeds + logs and commit
-        if: steps.cal.outputs.open == 'yes'
+        if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         run: |
           python3 -c "
           from daybreak.config import load_config

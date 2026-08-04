@@ -7,5 +7,4 @@ requests>=2.31
 yfinance>=0.2.40
 pandas-market-calendars>=4.3
 pytest>=8.0
-# Optional, only needed for live paper execution:
-# alpaca-py>=0.20
+alpaca-py>=0.20
