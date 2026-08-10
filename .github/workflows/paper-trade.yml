@@ -106,6 +106,23 @@ jobs:
           restore-keys: |
             pit-data-v1-
 
+      - name: Seed decision log from committed history
+        if: steps.cal.outputs.open == 'yes'
+        run: |
+          # The decision log's real source of truth is always the committed
+          # logs/decisions.jsonl (just checked out from git) — never the
+          # price-data cache above, which grows a new key every run and gets
+          # evicted under GitHub's per-repo quota well before a week is up.
+          # Runs AFTER the cache restore so it wins over a stale/evicted
+          # cache, and runs on both the trade path and the too-late skip
+          # path (which never touches the cache step at all) so the hash
+          # chain never silently resets to "genesis" and loses prior days.
+          mkdir -p pit_data
+          if [ -f logs/decisions.jsonl ]; then
+            cp logs/decisions.jsonl pit_data/decisions.jsonl
+            echo "seeded pit_data/decisions.jsonl from committed history ($(wc -l < logs/decisions.jsonl) entries)"
+          fi
+
       - name: Ingest fresh data
         if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'no'
         env:
@@ -155,7 +172,6 @@ jobs:
       - name: Record a skipped-day entry (too late to trade)
         if: steps.cal.outputs.open == 'yes' && steps.window.outputs.too_late == 'yes'
         run: |
-          mkdir -p pit_data
           python3 -c "
           from daybreak.config import load_config
           from daybreak.report.decision_log import DecisionLog
