@@ -36,12 +36,19 @@ portfolio:
   exit_fraction: 0.20         # EXIT line (hysteresis): held names are kept until
                               # they fall below the top 20% — the thermostat gap
                               # that stops boundary churn from eating the edge
-  sizing_mode: vol_target      # vol_target (default, validated) | fixed_fraction
-                              # (experimental — see daybreak/portfolio/construct.py
-                              # docstring. Must be backtested+validated on REAL
-                              # data before ever switching this on live.)
-  fixed_fraction_target: 0.90 # deployed fraction when sizing_mode=fixed_fraction;
-                              # ignored under vol_target
+  sizing_mode: fixed_fraction  # DEPLOYED LIVE PER EXPLICIT USER REQUEST despite
+                              # failing real-data validation at a nearby tested
+                              # value (0.90 -> sub_periods RED: total 5.5yr profit
+                              # only ~$9,150, with 3 losing years 2021/2022/2026
+                              # nearly offsetting 3 winning years 2023-2025 —
+                              # meaning deploying more capital deploys more of a
+                              # thin, close-to-even edge). This exact value (0.70)
+                              # has NOT itself been validated. User was shown the
+                              # numbers and asked to proceed anyway.
+  fixed_fraction_target: 0.70 # ~5.5x the ~13% typically deployed under vol_target;
+                              # still respects the 8%/name, 25%/sector caps and
+                              # the 8%/day turnover brake below — the ramp to this
+                              # level will take about a week+, not one day
   target_vol_annual: 0.10     # portfolio vol target. Was briefly raised to 0.20
                               # on user request for more deployed capital, but
                               # REVERTED after real-data validation went RED on

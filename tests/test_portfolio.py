@@ -104,16 +104,29 @@ def test_fixed_fraction_mode_deploys_constant_regardless_of_vol():
 
 
 def test_vol_target_mode_deploys_less_in_choppy_markets():
+    from copy import deepcopy
+    cfg = deepcopy(CFG)
+    cfg["portfolio"]["sizing_mode"] = "vol_target"
     c, v, s, cur = _inputs()
     low_vol = v.copy()
     high_vol = v * 50
-    t_low = target_portfolio(c, low_vol, s, cur, ON, set(), CFG)
-    t_high = target_portfolio(c, high_vol, s, cur, ON, set(), CFG)
-    # vol_target (default/live mode): choppier market -> less deployed,
-    # this is the asymmetry that motivated adding fixed_fraction as an
-    # alternative, documented here so it can't silently regress
+    t_low = target_portfolio(c, low_vol, s, cur, ON, set(), cfg)
+    t_high = target_portfolio(c, high_vol, s, cur, ON, set(), cfg)
+    # vol_target: choppier market -> less deployed. This asymmetry (it
+    # amplifies calm periods specifically) is why fixed_fraction exists as
+    # an alternative; documented here so the distinction can't silently
+    # regress regardless of which mode is live.
     assert t_high.sum() < t_low.sum()
 
 
-def test_default_sizing_mode_is_vol_target():
-    assert CFG["portfolio"].get("sizing_mode", "vol_target") == "vol_target"
+def test_sizing_mode_absent_defaults_to_vol_target():
+    # target_portfolio()'s own fallback when a config omits the key entirely,
+    # independent of whatever config.yaml currently has live
+    from copy import deepcopy
+    cfg = deepcopy(CFG)
+    cfg["portfolio"].pop("sizing_mode", None)
+    c, v, s, cur = _inputs()
+    t = target_portfolio(c, v, s, cur, ON, set(), cfg)
+    t_explicit = target_portfolio(c, v, s, cur, ON, set(),
+                                  {**cfg, "portfolio": {**cfg["portfolio"], "sizing_mode": "vol_target"}})
+    pd.testing.assert_series_equal(t, t_explicit)
