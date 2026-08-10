@@ -36,7 +36,14 @@ portfolio:
   exit_fraction: 0.20         # EXIT line (hysteresis): held names are kept until
                               # they fall below the top 20% — the thermostat gap
                               # that stops boundary churn from eating the edge
-  target_vol_annual: 0.10     # portfolio vol target
+  target_vol_annual: 0.20     # portfolio vol target — raised from 0.10 on user
+                              # request for more capital deployed. This roughly
+                              # doubles typical invested capital AND expected
+                              # drawdown (validated backtest at 0.10 showed
+                              # -9.5% max drawdown vs SPY's -24.5%; expect this
+                              # setting to land somewhere in between). Re-run
+                              # `make backtest && make validate` against real
+                              # data before trusting this number in practice.
   vol_lookback_days: 60
   max_weight_per_name: 0.08
   max_weight_per_sector: 0.25
