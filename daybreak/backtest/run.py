@@ -72,7 +72,12 @@ def attribution(result: BacktestResult) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    cfg = load_config()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None,
+                    help="alternate config.yaml to test without touching the live one")
+    args = ap.parse_args(argv)
+    cfg = load_config(args.config)
     store = PITStore(cfg["run"]["data_dir"])
     if "prices" not in store.tables():
         print("No data ingested. Run `make ingest-fixture` (or `make ingest`).")
