@@ -86,3 +86,34 @@ def test_hysteresis_keeps_gray_zone_holdings():
     held2["S25"] = 0.05                       # held, rank 26: well below exit line
     t2 = target_portfolio(c, v, s, held2, ON, set(), CFG)
     assert t2["S25"] == 0.0
+
+
+def test_fixed_fraction_mode_deploys_constant_regardless_of_vol():
+    from copy import deepcopy
+    cfg = deepcopy(CFG)
+    cfg["portfolio"]["sizing_mode"] = "fixed_fraction"
+    cfg["portfolio"]["fixed_fraction_target"] = 0.5
+    c, v, s, cur = _inputs()
+    low_vol = v.copy()          # calm market
+    high_vol = v * 50           # choppy market (recent vol much higher)
+    t_low = target_portfolio(c, low_vol, s, cur, ON, set(), cfg)
+    t_high = target_portfolio(c, high_vol, s, cur, ON, set(), cfg)
+    # fixed_fraction: total deployed is the same regardless of recent vol
+    # (caps may still trim slightly, but both hit the same pre-cap target)
+    assert abs(t_low.sum() - t_high.sum()) < 1e-6
+
+
+def test_vol_target_mode_deploys_less_in_choppy_markets():
+    c, v, s, cur = _inputs()
+    low_vol = v.copy()
+    high_vol = v * 50
+    t_low = target_portfolio(c, low_vol, s, cur, ON, set(), CFG)
+    t_high = target_portfolio(c, high_vol, s, cur, ON, set(), CFG)
+    # vol_target (default/live mode): choppier market -> less deployed,
+    # this is the asymmetry that motivated adding fixed_fraction as an
+    # alternative, documented here so it can't silently regress
+    assert t_high.sum() < t_low.sum()
+
+
+def test_default_sizing_mode_is_vol_target():
+    assert CFG["portfolio"].get("sizing_mode", "vol_target") == "vol_target"

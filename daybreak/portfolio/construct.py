@@ -5,9 +5,22 @@ Order of operations for each decision:
 2. Candidate pool = top decile of composite z, then best `max_positions` names.
 3. Earnings blackout: names reporting within the next N trading days cannot be
    NEW positions (existing ones may be held or exited, never added to).
-4. Vol-targeted sizing: weight proportional to 1/vol60, scaled so estimated
-   portfolio vol hits the annual target (single-correlation approximation,
-   rho=0.3, documented), then multiplied by the regime exposure factor.
+4. Sizing (portfolio.sizing_mode, default "vol_target"):
+   - "vol_target": weight proportional to 1/vol60, scaled so estimated
+     portfolio vol hits target_vol_annual (single-correlation approximation,
+     rho=0.3, documented). This scale moves day to day with recent realized
+     vol — it deploys MORE capital specifically when the market has been
+     calm, which is why raising target_vol_annual doesn't scale gains and
+     losses evenly; it disproportionately amplifies calm stretches.
+   - "fixed_fraction": weight proportional to 1/vol60 (for diversification
+     across the selected names), scaled to a CONSTANT
+     portfolio.fixed_fraction_target regardless of recent volatility — the
+     "just deploy a steady chunk of capital" mode. This removes the vol-based
+     throttle-down during choppy markets; the regime exposure factor (below)
+     and the circuit breaker are the only remaining defenses against a rough
+     stretch, so this mode should be validated on real data (does drawdown
+     stay acceptable?) before ever going live.
+   Both modes are then multiplied by the regime exposure factor.
 5. Caps: 8% per name, 25% per sector, redistribution passes, excess to cash.
 6. Conviction gate: increases require composite z > threshold; every trade
    (in or out) must move the position by more than min_trade_pct of portfolio,
@@ -58,14 +71,21 @@ def target_portfolio(composite: pd.Series, vols: pd.Series, sectors: pd.Series,
     if not selected:
         return pd.Series(0.0, index=idx)
 
-    # 4. inverse-vol weights, vol-targeted, regime-scaled
+    # 4. inverse-vol weights, sized per portfolio.sizing_mode, regime-scaled
     v = vols.reindex(selected)
     v = v.fillna(v.median()).clip(lower=1e-4)
     w = (1 / v) / (1 / v).sum()
-    ann = v * np.sqrt(252)
-    wsig = (w * ann)
-    port_vol = float(np.sqrt((wsig ** 2).sum() + RHO * (wsig.sum() ** 2 - (wsig ** 2).sum())))
-    scale = min(p["target_vol_annual"] / max(port_vol, 1e-9), 1.0)  # long-only, no leverage
+    sizing_mode = p.get("sizing_mode", "vol_target")
+    if sizing_mode == "fixed_fraction":
+        # constant deployed fraction regardless of recent volatility —
+        # diversification still comes from inverse-vol relative weights, but
+        # the day-to-day calm-vs-choppy throttle is gone (see module docstring)
+        scale = min(max(p.get("fixed_fraction_target", 0.9), 0.0), 1.0)
+    else:
+        ann = v * np.sqrt(252)
+        wsig = (w * ann)
+        port_vol = float(np.sqrt((wsig ** 2).sum() + RHO * (wsig.sum() ** 2 - (wsig ** 2).sum())))
+        scale = min(p["target_vol_annual"] / max(port_vol, 1e-9), 1.0)  # long-only, no leverage
     w = w * scale * EXPOSURE[regime_state]
 
     # 5. caps with redistribution passes; residual stays in cash
