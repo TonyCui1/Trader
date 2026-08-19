@@ -28,6 +28,24 @@ def test_backtest_is_deterministic(cfg_store):
     assert r1.metrics == r2.metrics
 
 
+def test_backtest_survives_signal_panel_with_shorter_date_index(cfg_store):
+    """Regression: real data can give a per-signal panel (e.g. because
+    compute_signal_panels excludes ETF symbols) a date index a few rows
+    shorter than `close`'s. The exposure-attribution loop indexes signal
+    panels by close-index position, so a raw (non-reindexed) shorter panel
+    used to crash with IndexError: single positional indexer is
+    out-of-bounds. It must instead just show NaN exposure for those dates."""
+    cfg, store = cfg_store
+    panels = compute_signal_panels(store, cfg)
+    regime = compute_regime(store, cfg)
+    from daybreak.signals.compute import SIGNAL_NAMES
+    trimmed = dict(panels)
+    for n in SIGNAL_NAMES:
+        trimmed[n] = panels[n].iloc[:-5]  # shorter than close.index
+    result = run_backtest(store, cfg, trimmed, regime)
+    assert not result.exposures.empty
+
+
 def test_fresh_store_same_config_same_hashes(tmp_path):
     cfg = load_config()
     cfg["run"]["data_dir"] = str(tmp_path / "pit_a")

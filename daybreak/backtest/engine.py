@@ -122,6 +122,12 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     uni_months = sorted(uni_by_month)
 
     composite_panel = panels["composite"].reindex(index=close.index, columns=close.columns)
+    # per-signal panels can have a different date index than `close` (e.g.
+    # compute_signal_panels excludes ETF symbols entirely, which can drop a
+    # date with no non-ETF price rows) — reindex once so `.iloc[prev_i]`
+    # below, which walks close.index positions, stays in bounds.
+    signal_panels = {n: panels[n].reindex(index=close.index, columns=close.columns)
+                     for n in SIGNAL_NAMES}
     regime = regime.reindex(close.index).ffill().fillna("ON")
 
     # start when enough names have a composite score (warmup) and >= config start
@@ -276,7 +282,7 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
             held_syms = target[target > 0]
             expo_row = {"date": t}
             for n in SIGNAL_NAMES:
-                sig_row = panels[n].iloc[prev_i]
+                sig_row = signal_panels[n].iloc[prev_i]
                 expo_row[n] = float(np.nansum(
                     [w * sig_row.get(sym, np.nan) for sym, w in held_syms.items()]))
             expo_rows.append(expo_row)
