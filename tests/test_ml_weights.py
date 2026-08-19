@@ -109,8 +109,10 @@ def test_ml_walkforward_runs_end_to_end_on_fixture(cfg_store):
 
 
 def test_equal_mode_is_unaffected_by_ml_module_existing(cfg_store):
-    """Confirms adding ml_weights.py didn't change default (live) behavior."""
+    """Confirms the ml_weights.py module coexists with the plain equal-weight
+    path (used as a rollback value) without adding ml-only outputs to it."""
     cfg, store = cfg_store
-    assert cfg["signals"].get("weighting_mode", "equal") == "equal"
+    cfg = deepcopy(cfg)
+    cfg["signals"]["weighting_mode"] = "equal"
     panels = compute_signal_panels(store, cfg)
     assert "_ml_weights" not in panels
