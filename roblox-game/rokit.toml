@@ -1,0 +1,7 @@
+# Toolchain pins, managed by Rokit (https://github.com/rojo-rbx/rokit).
+# Install Rokit, then run `rokit install` in this folder to get every tool below.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.5.1"
+stylua = "JohnnyMorganz/StyLua@2.0.2"
+selene = "Kampfkarren/selene@0.27.1"
