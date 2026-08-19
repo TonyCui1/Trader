@@ -58,14 +58,21 @@ def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]
         else:
             z[name] = _xsection_z(panel).clip(-w, w)
 
-    stack = np.dstack([z[n].reindex(index=P.index, columns=P.columns).to_numpy()
-                       for n in SIGNAL_NAMES])
-    n_avail = (~np.isnan(stack)).sum(axis=2)
-    import warnings as _warnings
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN slices
-        composite = np.where(n_avail >= 3, np.nanmean(stack, axis=2), np.nan)
-    z["composite"] = pd.DataFrame(composite, index=P.index, columns=P.columns)
+    weighting_mode = s.get("weighting_mode", "equal")
+    if weighting_mode == "ml_walkforward":
+        from .ml_weights import fit_walkforward_composite
+        composite_df, weight_log = fit_walkforward_composite(z, P, cfg)
+        z["composite"] = composite_df
+        z["_ml_weights"] = weight_log
+    else:
+        stack = np.dstack([z[n].reindex(index=P.index, columns=P.columns).to_numpy()
+                           for n in SIGNAL_NAMES])
+        n_avail = (~np.isnan(stack)).sum(axis=2)
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN slices
+            composite = np.where(n_avail >= 3, np.nanmean(stack, axis=2), np.nan)
+        z["composite"] = pd.DataFrame(composite, index=P.index, columns=P.columns)
     z["_sectors"] = sectors.to_frame("sector")
     return z
 

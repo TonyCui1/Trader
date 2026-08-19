@@ -14,6 +14,15 @@ universe:
 signals:
   winsor_z: 3.0               # cross-sectional z-scores clipped at +/- this value
   fundamental_lag_days: 90    # fundamentals usable only 90d after fiscal period end
+  weighting_mode: equal        # equal (default, validated) | ml_walkforward
+                              # (experimental — see daybreak/signals/ml_weights.py.
+                              # Must be backtested+validated on REAL data before
+                              # ever switching this on live.)
+  ml:
+    label_horizon_days: 21    # forward-return window used to fit weights
+    embargo_days: 21          # must be >= label_horizon_days to purge correctly
+    min_train_years: 2        # equal-weight fallback until this much history exists
+    refit_frequency: annual   # how often weights are refit (walk-forward)
   momentum:
     lookback_days: 252        # ~12 months
     skip_days: 21             # skip most recent month (12-1 momentum)
