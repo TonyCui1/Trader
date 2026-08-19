@@ -14,20 +14,37 @@ universe:
 signals:
   winsor_z: 3.0               # cross-sectional z-scores clipped at +/- this value
   fundamental_lag_days: 90    # fundamentals usable only 90d after fiscal period end
-  weighting_mode: ml_walkforward  # DEPLOYED TO PAPER PER EXPLICIT USER REQUEST
-                              # (2026-08-19): paper trading is now the test
-                              # environment for this — no pre-deployment
-                              # backtest-validation gate. Refits automatically
-                              # (walk-forward, purged/embargoed — see
-                              # daybreak/signals/ml_weights.py) as new paper
-                              # trading days accumulate in the PIT store, so
-                              # weights keep updating over time without any
-                              # extra job. equal is the fallback/rollback value.
+  weighting_mode: gbt_walkforward  # DEPLOYED TO PAPER PER EXPLICIT USER REQUEST
+                              # (2026-08-19): SUPERSEDES the ml_walkforward
+                              # deployment made earlier the same day. Same
+                              # walk-forward/purge/embargo discipline and the
+                              # same cross-sectional excess-return label, but
+                              # the six z-scored signals are combined by a
+                              # shallow gradient-boosted tree instead of NNLS
+                              # weights, so pairwise/triple signal interactions
+                              # can be expressed. Hyperparameters are hardcoded
+                              # module constants in daybreak/signals/ml_gbt.py
+                              # and must never be tuned per fold or moved here.
+                              # Paper trading is the test environment for this —
+                              # no pre-deployment backtest-validation gate. It
+                              # refits automatically as new paper trading days
+                              # accumulate in the PIT store, so the model keeps
+                              # updating without any extra job. ROLLBACK PATH:
+                              # ml_walkforward first (linear NNLS weights, the
+                              # signals.ml block below is kept intact for it),
+                              # then equal (never-fitted, cannot be overfit).
   ml:
     label_horizon_days: 21    # forward-return window used to fit weights
     embargo_days: 21          # must be >= label_horizon_days to purge correctly
     min_train_years: 2        # equal-weight fallback until this much history exists
     refit_frequency: annual   # how often weights are refit (walk-forward)
+  gbt:                              # walk-forward scheduling only -- NO hyperparameters
+                                    # here; see daybreak/signals/ml_gbt.py module constants,
+                                    # which must never be tuned per fold or moved to config.
+    label_horizon_days: 21          # same label definition as signals.ml
+    embargo_days: 21                # must be >= label_horizon_days
+    min_train_years: 3              # equal-weight fallback until this much history exists
+    refit_frequency: annual
   momentum:
     lookback_days: 252        # ~12 months
     skip_days: 21             # skip most recent month (12-1 momentum)
@@ -94,6 +111,16 @@ costs:
   taf_fee_per_share_sold: 0.000166
   commission_per_trade: 0.0   # Alpaca
   tax_rate_short_term: 0.35   # configurable short-term-gains estimate rate
+  calibration:
+    enabled: true            # deployed live per current project philosophy: paper
+                             # trading is the test environment. Safe because it is
+                             # byte-identical to the fixed formula until min_fills
+                             # real paper fills exist (currently only a handful).
+                             # Rollback: set enabled: false.
+    min_fills: 100           # hard gate; ~50 samples per fitted param (2 params)
+    refit_frequency: monthly # walk-forward fold cadence
+    spread_scale_bounds: [0.25, 4.0]   # fitted 'a' clip; fixed formula == 1.0
+    slippage_k_bounds: [0.025, 1.0]    # fitted 'k' clip; fixed formula == 0.1
 
 backtest:
   start: "2021-01-01"

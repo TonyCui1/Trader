@@ -24,6 +24,7 @@ from ..data.store import PITStore
 from ..portfolio.breaker import CircuitBreaker
 from ..portfolio.construct import target_portfolio
 from ..regime.state import OFF
+from .cost_calibration import walkforward_calibration_schedule
 from .costs import trade_cost
 from .metrics import compute_metrics
 
@@ -145,6 +146,36 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     if end_cfg:
         dates = dates[dates <= pd.Timestamp(str(end_cfg))]
 
+    # Optional learned cost calibration (opt-in; see cost_calibration.py).
+    # calib_by_date maps every simulated date to the {spread_scale,
+    # slippage_k} dict of its active walk-forward fold, or None where that
+    # fold has never had a successful fit yet — trade_cost(calib=None)
+    # reproduces the fixed formula exactly, so a disabled/empty schedule
+    # leaves this backtest byte-identical to before this feature existed.
+    calib_by_date: dict[pd.Timestamp, dict | None] = {}
+    cost_calibration_schedule = None
+    if cfg["costs"].get("calibration", {}).get("enabled"):
+        schedule = walkforward_calibration_schedule(store, cfg, dates)
+        fold_starts_arr = schedule.index.to_numpy()
+        for t in dates:
+            pos = int(fold_starts_arr.searchsorted(np.datetime64(t), side="right")) - 1
+            if pos < 0:
+                calib_by_date[t] = None
+                continue
+            row = schedule.iloc[pos]
+            if pd.isna(row["spread_scale"]):
+                calib_by_date[t] = None
+            else:
+                calib_by_date[t] = {"spread_scale": float(row["spread_scale"]),
+                                    "slippage_k": float(row["slippage_k"])}
+        if (schedule["source"] == "fitted").any():
+            cost_calibration_schedule = schedule.reset_index().to_dict("records")
+            n_fitted = int((schedule["source"] == "fitted").sum())
+            warnings.append(
+                f"cost calibration ACTIVE: {n_fitted} walk-forward fold(s) used "
+                "execution costs fitted from real paper-trading fills instead "
+                "of the fixed formula (see metrics['cost_calibration'])")
+
     breaker = CircuitBreaker(
         cfg, cooldown_days=cfg["portfolio"].get("circuit_breaker_cooldown_days"))
     cash = float(cfg["backtest"]["initial_equity"])
@@ -183,7 +214,7 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
                 notional = sh * px
                 cost = trade_cost(notional, sh, "sell", high.at[t, sym],
                                   low.at[t, sym], adv.iat[prev_i, adv.columns.get_loc(sym)],
-                                  cfg, cost_multiplier)
+                                  cfg, cost_multiplier, calib=calib_by_date.get(t))
                 cash += notional - cost
                 trades_today.append({"date": t, "symbol": sym, "side": "sell",
                                      "shares": sh, "price": px, "cost": cost,
@@ -248,7 +279,8 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
                         continue
                     notional = sh * px
                     cost = trade_cost(notional, sh, "sell", high.at[t, sym],
-                                      low.at[t, sym], adv_d, cfg, cost_multiplier)
+                                      low.at[t, sym], adv_d, cfg, cost_multiplier,
+                                      calib=calib_by_date.get(t))
                     cash += notional - cost
                     gain = (px - held[1]) * sh - cost
                     held[0] -= sh
@@ -263,14 +295,16 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
                         continue
                     notional = sh * px
                     cost = trade_cost(notional, sh, "buy", high.at[t, sym],
-                                      low.at[t, sym], adv_d, cfg, cost_multiplier)
+                                      low.at[t, sym], adv_d, cfg, cost_multiplier,
+                                      calib=calib_by_date.get(t))
                     if notional + cost > cash:
                         sh = int((cash * 0.995) / px)
                         if sh <= 0:
                             continue
                         notional = sh * px
                         cost = trade_cost(notional, sh, "buy", high.at[t, sym],
-                                          low.at[t, sym], adv_d, cfg, cost_multiplier)
+                                          low.at[t, sym], adv_d, cfg, cost_multiplier,
+                                          calib=calib_by_date.get(t))
                     cash -= notional + cost
                     held = positions.setdefault(sym, [0, 0.0])
                     held[1] = (held[1] * held[0] + px * sh) / (held[0] + sh)
@@ -316,6 +350,8 @@ def run_backtest(store: PITStore, cfg: dict, panels: dict, regime: pd.Series,
     trades = pd.DataFrame(trade_rows)
     exposures = pd.DataFrame(expo_rows).set_index("date") if expo_rows else pd.DataFrame()
     metrics = compute_metrics(daily, trades, cfg)
+    if cost_calibration_schedule is not None:
+        metrics["cost_calibration"] = cost_calibration_schedule
     if breaker.trip_log:
         metrics["circuit_breaker_trips"] = breaker.trip_log
         warnings.append(

@@ -64,6 +64,11 @@ def compute_signal_panels(store: PITStore, cfg: dict) -> dict[str, pd.DataFrame]
         composite_df, weight_log = fit_walkforward_composite(z, P, cfg)
         z["composite"] = composite_df
         z["_ml_weights"] = weight_log
+    elif weighting_mode == "gbt_walkforward":
+        from .ml_gbt import fit_walkforward_gbt
+        composite_df, importance_log = fit_walkforward_gbt(z, P, cfg)
+        z["composite"] = composite_df
+        z["_gbt_importance"] = importance_log
     else:
         stack = np.dstack([z[n].reindex(index=P.index, columns=P.columns).to_numpy()
                            for n in SIGNAL_NAMES])
